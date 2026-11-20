@@ -970,7 +970,7 @@ function vAyarlar(){
       <div class="row" style="gap:6px"><input class="f grow" id="stName" placeholder="Ad Soyad"><input class="f" id="stRole" placeholder="Görev (ops.)" style="width:40%"></div>
       <button class="btn pri mt" data-act="staff-add">+ Personel ekle</button>
       <div class="mt">${S.staff.length?S.staff.slice().sort((a,b)=>trSort(a.name,b.name)).map(s=>`<div class="li"><div class="grow"><b>${esc(s.name)}</b> <span class="sub">${esc(s.role||"")}</span></div><button class="btn sm danger" data-act="staff-del" data-id="${s.id}">Sil</button></div>`).join(""):`<div class="sub">Henüz personel yok.</div>`}</div>
-      <p class="sub">${IS_GAS?"Görev atamak için kullanılan liste. Panele giriş için Kullanıcılar bölümünden hesap açın.":"Üst menüdeki “İşlem yapan” seçimi, fiyat değişikliği ve kontrol işaretlerinde kimin işlem yaptığını kaydeder (bu cihazda hatırlanır)."}</p></div>
+      <p class="sub">${IS_GAS?(isOwner()?"Görev atamak için kullanılan liste. Panele giriş için Kullanıcılar bölümünden hesap açın.":"Görev atamak için kullanılan liste. Panele giriş hesaplarını yönetici açar."):"Üst menüdeki “İşlem yapan” seçimi, fiyat değişikliği ve kontrol işaretlerinde kimin işlem yaptığını kaydeder (bu cihazda hatırlanır)."}</p></div>
     <div class="card"><h2>Fiyat ayarları</h2>
       <div class="row" style="gap:8px"><div class="grow"><label class="l">+/− adım tutarı</label><input class="f" id="cfgStep" inputmode="decimal" value="${esc(c.step)}"></div>
       <div class="grow"><label class="l">Para birimi simgesi</label><input class="f" id="cfgCur" value="${esc(c.currency)}"></div></div>
@@ -1272,7 +1272,9 @@ const gs=(fn,...a)=>HAS_GSRUN
       .then(r=>{ if(!r.ok) throw new Error("Sunucuya ulaşılamadı ("+r.status+")"); return r.json(); },()=>{ throw new Error("İnternet bağlantısı yok ya da sunucuya ulaşılamadı."); })
       .then(o=>{ if(!o||!o.ok) throw new Error((o&&o.hata)||"Sunucu hatası"); return o.sonuc; });
 const gsMsg=e=>String((e&&e.message)||e||"").replace(/^Error:\s*/,"").replace(/^Exception:\s*/,"");
-const isAdmin=()=>!IS_GAS||(UI.me&&UI.me.rol==="yonetici");
+const isAdmin=()=>!IS_GAS||(UI.me&&(UI.me.rol==="yonetici"||UI.me.rol==="mudur"));   // ciro/kasa/gider ve ayarlar
+const isOwner=()=>!IS_GAS||(UI.me&&UI.me.rol==="yonetici");                           // kullanıcı yönetimi
+const ROL_AD={yonetici:"Yönetici",mudur:"Müdür",personel:"Personel"};
 function makeGasDB(token){
   const store={}, subs=new Set(); let since=0, q=[], qt=null, pulling=null;
   const clone=o=>JSON.parse(JSON.stringify(o));
@@ -1356,13 +1358,13 @@ async function loadUsers(){ try{ USERS=await gs("kullaniciListe",lsGet("paraketa
 function userCards(){
   if(!IS_GAS) return "";
   const me=UI.me||{};
-  let h=`<div class="card"><h2>Hesabım</h2><p><b>${esc(me.ad||"")}</b> <span class="badge ${me.rol==="yonetici"?"b":""}">${me.rol==="yonetici"?"Yönetici":"Personel"}</span></p>
+  let h=`<div class="card"><h2>Hesabım</h2><p><b>${esc(me.ad||"")}</b> <span class="badge ${me.rol!=="personel"?"b":""}">${ROL_AD[me.rol]||"Personel"}</span></p>
     <div class="row wrapf"><button class="btn" data-act="pw-change">Şifremi değiştir</button><button class="btn danger" data-act="logout">Çıkış yap</button></div></div>`;
   if(me.rol==="yonetici"){
     if(USERS===null){ loadUsers(); USERS=undefined; }
     h+=`<div class="card"><div class="row between mb"><h2 style="margin:0">Kullanıcılar</h2><button class="btn sm pri" data-act="user-new">+ Kullanıcı</button></div>
-      <p class="sub" style="margin-top:-4px">Panele giriş yapabilecek kişiler. Personel ciro, kasa ve giderleri göremez.</p>
-      ${!USERS?`<div class="sub">Yükleniyor…</div>`:USERS.map(u=>`<div class="li"><div class="grow"><b>${esc(u.ad)}</b> <span class="badge ${u.rol==="yonetici"?"b":""}">${u.rol==="yonetici"?"Yönetici":"Personel"}</span></div>
+      <p class="sub" style="margin-top:-4px">Panele giriş yapabilecek kişiler. Müdür ciro, kasa ve giderleri görür ama kullanıcı ekleyemez; personel ciro, kasa ve giderleri göremez.</p>
+      ${!USERS?`<div class="sub">Yükleniyor…</div>`:USERS.map(u=>`<div class="li"><div class="grow"><b>${esc(u.ad)}</b> <span class="badge ${u.rol!=="personel"?"b":""}">${ROL_AD[u.rol]||"Personel"}</span></div>
         <button class="btn sm ghost" data-act="user-edit" data-ad="${esc(u.ad)}">Düzenle</button></div>`).join("")}</div>`;
   }
   return h;
@@ -1371,7 +1373,7 @@ function userForm(u){
   const isNew=!u; u=u||{ad:"",rol:"personel"};
   openModal(isNew?"Yeni kullanıcı":"Kullanıcıyı düzenle",`
     <label class="l">Kullanıcı adı *</label><input class="f" name="ad" value="${esc(u.ad)}" placeholder="ör. Ayşe veya Mutfak" ${isNew?"autofocus":"readonly"}>
-    <label class="l">Rol</label><select class="f" name="rol"><option value="personel" ${u.rol!=="yonetici"?"selected":""}>Personel — ciro, kasa ve giderleri görmez</option><option value="yonetici" ${u.rol==="yonetici"?"selected":""}>Yönetici — her şeyi görür</option></select>
+    <label class="l">Rol</label><select class="f" name="rol"><option value="personel" ${u.rol!=="yonetici"?"selected":""}>Personel — ciro, kasa ve giderleri görmez</option><option value="mudur" ${u.rol==="mudur"?"selected":""}>Müdür — ciro, kasa ve giderleri görür; kullanıcı ekleyemez</option><option value="yonetici" ${u.rol==="yonetici"?"selected":""}>Yönetici — her şeyi görür, kullanıcıları yönetir</option></select>
     <label class="l">${isNew?"Şifre *":"Yeni şifre (değiştirmek için)"}</label><input class="f" name="sifre" type="text" autocomplete="off" placeholder="En az 4 karakter">
     <p class="sub">Şifreyi kişiye siz iletin; kişi girdikten sonra kendi şifresini değiştirebilir.</p>`,
   { extra:isNew?"":`<button type="button" class="btn danger" data-act="user-del" data-ad="${esc(u.ad)}">Sil</button>`,
