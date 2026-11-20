@@ -267,7 +267,7 @@ const SUGGESTED_TEMPLATES = [
 ];
 
 /* ================= durum ================= */
-const S = { fish:[], log:[], cfg:{...DEFAULT_CFG}, cash:[], expenses:[], deliveries:[],
+const S = { fish:[], log:[], cfg:{...DEFAULT_CFG}, cash:[], expenses:[], deliveries:[], aliases:[],
   templates:[], runs:[], payments:[], stock:[], stockLog:[], staff:[], tasks:[] };
 const UI = { view:"ozet", date:today(), q:"", drafts:{}, stDrafts:{}, histFish:"", histDays:30, taskF:"acik", taskStaff:"",
   stCat:"Tümü", countMode:false, ozPer:"gun", ozRef:today(), per:"ay", expF:"bekleyen", eq:"", delSup:"", who: lsGet("paraketa_who","") };
@@ -348,6 +348,7 @@ function subscribeAll(){
   subCol("cash", DB.collection("cash").orderBy("date","desc").limit(400));
   subCol("expenses", DB.collection("expenses").orderBy("date","desc").limit(3000));
   subCol("deliveries", DB.collection("deliveries").orderBy("at","desc").limit(1500));
+  subCol("aliases", DB.collection("aliases"));
 }
 function setSync(k){ const el=$("#sync"); el.className="sync "+k; el.title={ok:"Tüm değişiklikler kaydedildi",busy:"Kaydediliyor…",local:"Yerel mod: veriler yalnızca bu tarayıcıda",err:"Bağlantı sorunu"}[k]||""; }
 
@@ -793,7 +794,8 @@ function vTeslimat(){
   const g=groupBy(list.slice(0,120),x=>x.date);
   const sups=[...new Set(S.deliveries.map(x=>x.supplier).filter(Boolean))].sort(trSort);
   return `${stokSeg("teslimat")}
-  <div class="row between wrapf mb"><h1 style="margin:0">Tedarikçi teslimatları</h1><button class="btn pri" data-act="del-new">+ Teslimat</button></div>
+  <div class="row between wrapf mb"><h1 style="margin:0">Tedarikçi teslimatları</h1><div class="row"><label class="btn" style="cursor:pointer">e-Fatura yükle<input type="file" id="invFile" accept=".xml,.zip,application/xml,text/xml,application/zip" hidden></label><button class="btn pri" data-act="del-new">+ Teslimat</button></div></div>
+  <p class="sub" style="margin-top:-6px">Teslimat ya da e-Fatura kaydedildiğinde stok miktarları otomatik artar.</p>
   <div class="grid g3 mb tiles">
     <div class="card tile"><div class="k">Bugün</div><div class="v">${S.deliveries.filter(x=>x.date===t).length}<small> teslimat</small></div></div>
     <div class="card tile"><div class="k">Bu ay alım</div><div class="v">${money(Math.round(month.reduce((s,x)=>s+(Number(x.total)||0),0)*100)/100)}</div><div class="sub">${month.length} teslimat</div></div>
@@ -801,7 +803,7 @@ function vTeslimat(){
   </div>
   ${sups.length?`<select class="f mb" data-bind="delSup" aria-label="Tedarikçi"><option value="">Tüm tedarikçiler</option>${sups.map(s=>`<option ${UI.delSup===s?"selected":""}>${esc(s)}</option>`).join("")}</select>`:""}
   ${list.length?[...g].map(([dd,arr])=>`<div class="cat-h">${esc(longDate(dd))}</div><div class="card" style="padding:2px 14px">${arr.map(x=>`<div class="li" data-act="del-edit" data-id="${x.id}" style="cursor:pointer"><div class="grow">
-      <div class="row wrapf" style="gap:6px"><b>${esc(x.supplier||"Tedarikçi belirtilmedi")}</b>${x.quality?`<span class="badge ${QUAL[x.quality][1]}">${QUAL[x.quality][0]}</span>`:""}${x.expenseId?`<span class="badge b">Gidere işlendi</span>`:""}</div>
+      <div class="row wrapf" style="gap:6px"><b>${esc(x.supplier||"Tedarikçi belirtilmedi")}</b>${x.quality?`<span class="badge ${QUAL[x.quality][1]}">${QUAL[x.quality][0]}</span>`:""}${x.expenseId?`<span class="badge b">Gidere işlendi</span>`:""}${x.stockApplied&&x.stockApplied.length?`<span class="badge g">Stoka işlendi</span>`:""}${x.invoiceNo?`<span class="badge">Fatura ${esc(x.invoiceNo)}</span>`:""}</div>
       <div class="sub">${x.at?hm(x.at):""}${x.by?" · Teslim alan: "+esc(x.by):""}</div>
       ${(x.items||[]).length?`<div class="sub" style="margin-top:3px">${x.items.map(i=>esc(i.name)+(i.qty!=null?" "+NF.format(i.qty)+(i.unit?" "+esc(i.unit):""):"")+(i.price!=null?" × "+money(i.price):"")).join(" · ")}</div>`:""}
       ${x.note?`<div class="sub" style="margin-top:3px">${esc(x.note)}</div>`:""}</div><div class="num"><b>${money(x.total)}</b></div></div>`).join("")}</div>`).join("")
@@ -820,11 +822,12 @@ function delForm(x){
       <select class="f" style="width:30%" data-di="${i}" data-k="unit">${units.map(u=>`<option ${u===it.unit?"selected":""}>${esc(u)}</option>`).join("")}</select>
       <input class="f" style="width:40%" inputmode="decimal" placeholder="Birim fiyat" value="${it.price!=null?esc(String(it.price).replace(".",",")):""}" data-di="${i}" data-k="price"></div></div>`).join("");
     syncDelTotal(); };
+  DEL.legacy=!!(x&&!x.stockApplied);
   openModal(isNew?"Yeni teslimat":"Teslimatı düzenle",`
     <div class="row" style="gap:8px"><div class="grow"><label class="l">Tarih</label><input class="f" type="date" name="date" value="${esc(x?x.date:UI.date)}"></div><div class="grow"><label class="l">Saat</label><input class="f" type="time" name="time" value="${x&&x.at?hm(x.at):pad(n.getHours())+":"+pad(n.getMinutes())}"></div></div>
     <label class="l">Tedarikçi</label><input class="f" name="supplier" list="supList" value="${esc(x?x.supplier||"":"")}" placeholder="ör. Balıkçı Hasan" ${isNew?"autofocus":""}><datalist id="supList">${suppliers().map(s=>`<option value="${esc(s)}">`).join("")}</datalist>
     <label class="l">Kalemler</label><datalist id="itemList">${names.map(s=>`<option value="${esc(s)}">`).join("")}</datalist><div id="delItems"></div>
-    <button type="button" class="btn sm" data-act="di-add">+ Kalem ekle</button>
+    <button type="button" class="btn sm" data-act="di-add">+ Kalem ekle</button><div id="delStock" class="mt"></div>
     <label class="l">Toplam tutar (${esc(S.cfg.currency)})</label><input class="f" name="total" id="delTotal" inputmode="decimal" value="${x&&x.total!=null?esc(String(x.total).replace(".",",")):""}" placeholder="Kalemlerden hesaplanır">
     <label class="l">Kalite / kontrol</label><select class="f" name="quality">${Object.entries(QUAL).map(([k,[l]])=>`<option value="${k}" ${(x?x.quality:"iyi")===k?"selected":""}>${l}</option>`).join("")}</select>
     <label class="l">Not</label><input class="f" name="note" value="${esc(x?x.note||"":"")}" placeholder="ör. 2 kasa levrek küçük geldi, iade edildi">
@@ -843,17 +846,130 @@ function delForm(x){
       if(isNew){ const id=uid(); let expenseId=null;
         if(v.mkExp&&total){ expenseId=uid(); const st=v.expStatus;
           await setDoc("expenses/"+expenseId,{date:data.date,amount:total,supplier:v.supplier,desc:"Teslimat"+(items.length?": "+items.map(i=>i.name).slice(0,4).join(", "):""),cat:(S.cfg.expenseCats||[]).find(c=>/balık/i.test(c))&&items.some(i=>S.fish.some(f=>f.name.toLocaleLowerCase("tr")===i.name.toLocaleLowerCase("tr")))?(S.cfg.expenseCats||[]).find(c=>/balık/i.test(c)):"",status:st,method:v.expMethod,due:"",invoice:"",note:"",source:"teslimat",deliveryId:id,createdAt:nowISO(),createdBy:who(),...(st==="odendi"?{paidAt:nowISO(),paidBy:who()}:{})}); }
-        await setDoc("deliveries/"+id,{...data,expenseId,by:who(),createdAt:nowISO()});
+        const applied=await applyStock([],items,(v.supplier||"Teslimat"));
+        await setDoc("deliveries/"+id,{...data,stockApplied:applied,expenseId,by:who(),createdAt:nowISO()});
         if(v.quality==="sorunlu"&&v.mkTask) await setDoc("tasks/"+uid(),{title:"Sorunlu teslimat: "+(v.supplier||"tedarikçi"),note:v.note,assignee:"",due:today(),prio:"yuksek",cat:(S.cfg.taskCats||[]).includes("Stok")?"Stok":"",status:"acik",createdAt:nowISO(),createdBy:who(),source:"teslimat"});
-      } else await updDoc("deliveries/"+x.id,data);
+      } else { if(!DEL.legacy) data.stockApplied=await applyStock(x.stockApplied,items,(v.supplier||"Teslimat")+" (düzeltme)"); await updDoc("deliveries/"+x.id,data); }
       toast("Teslimat kaydedildi","ok"); return true; } });
   DELdraw=draw; draw();
   $("#delTotal").addEventListener("input",()=>{ DEL.totalTouched=$("#delTotal").value.trim()!==""; });
 }
 function syncDelTotal(){
+  const sp=$("#delStock"); if(sp&&DEL) sp.innerHTML=DEL.legacy?`<div class="sub">Bu eski kayıt stoka işlenmemişti; düzenleme stoku değiştirmez.</div>`:stockPreview(DEL.items);
   if(!DEL||DEL.totalTouched) return; const el=$("#delTotal"); if(!el) return;
   let s=0,any=false; DEL.items.forEach(i=>{ const q=parseNum(i.qty), p=parseNum(i.price); if(q!=null&&p!=null&&!Number.isNaN(q)&&!Number.isNaN(p)){ s+=q*p; any=true; } });
   el.value=any?String(Math.round(s*100)/100).replace(".",","):"";
+}
+
+/* ================= Teslimat → stok ve e-Fatura ================= */
+const normTxt=s=>String(s||"").toLocaleLowerCase("tr").replace(/[^a-z0-9çğıöşüâî]+/g," ").replace(/(\d+)\s*[,.]\s*(\d+)/g,"$1.$2").replace(/(\d+(?:\.\d+)?)\s+(cl|ml|lt|l|kg|gr|g|cc)\b/g,"$1$2").replace(/\s+/g," ").trim();
+const hashId=s=>{ let h1=0x811c9dc5,h2=5381; for(const ch of String(s)){ const c=ch.codePointAt(0); h1=Math.imul(h1^c,16777619)>>>0; h2=(Math.imul(h2,33)+c)>>>0; } return "a"+h1.toString(36)+h2.toString(36); };
+function stockMatch(name){
+  const n=normTxt(name); if(!n) return null;
+  const al=S.aliases.find(a=>a.key===n); if(al&&S.stock.some(s=>s.id===al.stockId)) return {id:al.stockId,score:1,how:"hatırlanan"};
+  const ex=S.stock.filter(s=>normTxt(s.name)===n).sort((a,b)=>(b.countedAt||"").localeCompare(a.countedAt||""));
+  if(ex.length) return {id:ex[0].id,score:1,how:"aynı ad"};
+  const tk=t=>t.split(" ").filter(Boolean), nt=tk(n), nums=nt.filter(t=>/\d/.test(t));
+  let best=null;
+  S.stock.forEach(s=>{ const st=tk(normTxt(s.name)); if(!st.length) return;
+    const snums=st.filter(t=>/\d/.test(t)); if(snums.some(x=>!nums.includes(x))||nums.some(x=>snums.length&&!snums.includes(x))) return;
+    const hit=st.filter(t=>nt.some(u=>u===t||(t.length>3&&u.startsWith(t))||(u.length>3&&t.startsWith(u)))).length;
+    const score=hit/st.length*(0.85+0.15*Math.min(1,hit/nt.length));
+    if(!best||score>best.score) best={id:s.id,score,how:"benzer ad"}; });
+  return best&&best.score>=0.6?best:null;
+}
+// Teslimat kalemlerini stoka uygular; önceki uygulamayı geri alır. Uygulanan listeyi döndürür.
+async function applyStock(prev,items,label){
+  const delta={}, applied=[];
+  (prev||[]).forEach(a=>{ delta[a.id]=(delta[a.id]||0)-a.qty; });
+  items.forEach(i=>{ if(i.stockId===null) return; const sid=i.stockId||(stockMatch(i.name)||{}).id; const q=typeof i.stockQty==="number"?i.stockQty:i.qty;
+    if(sid&&typeof q==="number"&&q>0&&S.stock.some(s=>s.id===sid)){ applied.push({id:sid,qty:q}); delta[sid]=(delta[sid]||0)+q; } });
+  const at=nowISO();
+  for(const sid of Object.keys(delta)){ const d=Math.round(delta[sid]*1000)/1000; if(!d) continue;
+    const s=S.stock.find(x=>x.id===sid); if(!s) continue; const old=s.qty==null||s.qty===""?0:Number(s.qty); const nv=Math.max(0,Math.round((old+d)*1000)/1000);
+    await updDoc("stock/"+sid,{qty:nv}).catch(()=>{});
+    await setDoc("stockLog/"+uid(),{itemId:sid,name:s.name,old:s.qty??null,new:nv,at,by:who(),note:(d>0?"+":"")+NF.format(d)+" · "+label}).catch(()=>{}); }
+  return applied;
+}
+function stockPreview(items){
+  const add=[], miss=[];
+  items.forEach(i=>{ if(!(i.name||"").trim()) return; const q=parseNum(i.qty); const m=stockMatch(i.name);
+    if(m){ const s=S.stock.find(x=>x.id===m.id); add.push(esc(s.name)+(q!=null&&!Number.isNaN(q)?" +"+NF.format(q):"")); } else miss.push(esc(i.name.trim())); });
+  return (add.length?`<div class="sub">Stoka eklenecek: <b style="color:var(--ink)">${add.join(", ")}</b></div>`:"")+(miss.length?`<div class="sub">Stokta bulunamadı (stoka işlenmez): ${miss.join(", ")}</div>`:"");
+}
+
+/* ---- e-Fatura (UBL-TR XML) ---- */
+const UNIT_TR={C62:"adet",NIU:"adet",KGM:"kg",GRM:"g",LTR:"lt",MLT:"ml",CLT:"cl",BX:"kutu",PA:"paket",PK:"paket",CS:"koli",CT:"koli",KT:"kit",SET:"set",PR:"çift",MTR:"m",H87:"adet",BG:"torba",BO:"şişe"};
+function parseUBL(xml){
+  const doc=new DOMParser().parseFromString(xml,"application/xml");
+  if(doc.getElementsByTagName("parsererror").length) throw new Error("Dosya okunamadı (geçerli bir XML değil).");
+  const T=(el,n)=>el?el.getElementsByTagNameNS("*",n):[];
+  const t1=(el,n)=>{ const x=T(el,n)[0]; return x?x.textContent.trim():""; };
+  const kid=(el,n)=>el?[...el.children].find(c=>c.localName===n):null;
+  const root=doc.documentElement; if(!/Invoice|DespatchAdvice/.test(root.localName)) throw new Error("Bu dosya bir e-Fatura değil.");
+  const isIrs=root.localName==="DespatchAdvice";
+  const sup=kid(root,"AccountingSupplierParty")||kid(root,"DespatchSupplierParty");
+  const party=sup?T(sup,"Party")[0]:null;
+  let supplier=party?(t1(kid(party,"PartyName"),"Name")||[t1(party,"FirstName"),t1(party,"FamilyName")].filter(Boolean).join(" ")):"";
+  const lines=[...T(root,isIrs?"DespatchLine":"InvoiceLine")].filter(l=>l.parentNode===root);
+  const items=lines.map(l=>{ const qEl=T(l,isIrs?"DeliveredQuantity":"InvoicedQuantity")[0];
+    const qty=qEl?parseFloat(qEl.textContent):null, uc=qEl?qEl.getAttribute("unitCode")||"":"";
+    const item=kid(l,"Item"); const name=t1(item,"Name")||t1(item,"Description")||"Kalem";
+    const pr=kid(l,"Price"); const price=pr?parseFloat(t1(pr,"PriceAmount")):null;
+    const tax=T(l,"Percent")[0]; return {invName:name,qty:isFinite(qty)?qty:null,unit:UNIT_TR[uc]||uc.toLowerCase(),price:isFinite(price)?price:null,line:parseFloat((kid(l,"LineExtensionAmount")||{}).textContent)||null,kdv:tax?parseFloat(tax.textContent):null}; });
+  const lmt=kid(root,"LegalMonetaryTotal");
+  return {kind:isIrs?"e-İrsaliye":"e-Fatura",no:((kid(root,"ID")||{}).textContent||"").trim(),date:((kid(root,"IssueDate")||{}).textContent||today()).trim(),supplier,items,
+    total:lmt?parseFloat(t1(lmt,"PayableAmount"))||null:null,net:lmt?parseFloat(t1(lmt,"TaxExclusiveAmount"))||null:null};
+}
+let JSZIP_P=null;
+function loadZip(){ if(window.JSZip) return Promise.resolve(window.JSZip); if(!JSZIP_P) JSZIP_P=new Promise((res,rej)=>{ const sc=document.createElement("script"); sc.src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"; sc.onload=()=>res(window.JSZip); sc.onerror=()=>{ JSZIP_P=null; rej(new Error("ZIP açılamadı; içindeki XML dosyasını çıkarıp yükleyin.")); }; document.head.appendChild(sc); }); return JSZIP_P; }
+async function readInvoiceFile(f){
+  if(/\.zip$/i.test(f.name)||f.type.includes("zip")){ const JSZip=await loadZip(); const z=await JSZip.loadAsync(f);
+    const xs=Object.values(z.files).filter(e=>!e.dir&&/\.xml$/i.test(e.name)); if(!xs.length) throw new Error("ZIP içinde XML dosyası yok.");
+    return await xs[0].async("string"); }
+  if(/\.pdf$/i.test(f.name)||/\.(jpe?g|png|heic)$/i.test(f.name)) throw new Error("Bu dosya PDF/fotoğraf. Şimdilik e-Faturanın XML dosyasını (veya ZIP'ini) yükleyin; e-postadaki ekler arasında bulunur.");
+  return await f.text();
+}
+let INV=null;
+async function invoiceUpload(file){
+  let inv; try{ inv=parseUBL(await readInvoiceFile(file)); }catch(e){ toast(e.message||"Fatura okunamadı","err"); return; }
+  if(!inv.items.length){ toast("Faturada kalem bulunamadı","err"); return; }
+  const dup=inv.no&&S.deliveries.find(d=>d.invoiceNo===inv.no);
+  INV={...inv,rows:inv.items.map(it=>{ const m=stockMatch(it.invName); return {...it,stockId:m?m.id:"",how:m?m.how:"",stockQty:it.qty}; })};
+  const opts=sel=>`<option value="">— Stoka işleme —</option><option value="__new" ${sel==="__new"?"selected":""}>+ Yeni stok kalemi olarak ekle</option>`+
+    [...groupBy(S.stock.slice().sort((a,b)=>trSort(a.cat||"",b.cat||"")||trSort(a.name,b.name)),s=>s.cat||"Kategorisiz")].map(([c,arr])=>`<optgroup label="${esc(c)}">${arr.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}${s.unit?" ("+esc(s.unit)+")":""}</option>`).join("")}</optgroup>`).join("");
+  const rows=INV.rows.map((r,i)=>`<div class="card flat" style="padding:10px;margin-bottom:8px">
+      <div style="font-weight:700">${esc(r.invName)}</div>
+      <div class="sub">${r.qty!=null?NF.format(r.qty)+" "+esc(r.unit):""}${r.price!=null?" × "+money(r.price)+" (KDV hariç)":""}${r.how?` · <span class="badge g">${esc(r.how)}</span>`:` · <span class="badge a">eşleşmedi</span>`}</div>
+      <div class="row" style="gap:6px;margin-top:6px"><select class="f grow" data-inv="${i}" data-k="stockId" aria-label="Stok kalemi">${opts(r.stockId)}</select>
+      <input class="f" style="width:90px" inputmode="decimal" value="${r.qty!=null?esc(String(r.qty).replace(".",",")):""}" data-inv="${i}" data-k="stockQty" aria-label="Stoka eklenecek miktar" title="Stoka eklenecek miktar (ör. 1 koli = 6 şişe ise 6 yazın)"></div></div>`).join("");
+  openModal(inv.kind+" yükle",`
+    ${dup?`<div class="banner">Bu fatura (${esc(inv.no)}) ${shortDate(dup.date)} tarihinde zaten yüklenmiş. Tekrar kaydederseniz stok iki kez artar.</div>`:""}
+    <label class="l">Tedarikçi</label><input class="f" name="supplier" value="${esc(inv.supplier)}">
+    <div class="row" style="gap:8px"><div class="grow"><label class="l">Fatura no</label><input class="f" name="no" value="${esc(inv.no||"")}"></div>
+    <div class="grow"><label class="l">Tarih</label><input class="f" type="date" name="date" value="${esc((inv.date||today()).slice(0,10))}"></div></div>
+    <p class="sub">${INV.rows.length} kalem · Toplam ${money(inv.total)} (KDV dahil). Her satırda stok kalemini ve stoka eklenecek miktarı kontrol edin. Koli/kasa gibi birimlerde stoktaki birime göre miktarı düzeltin (ör. 2 koli × 6 = 12 şişe).</p>
+    ${rows}
+    <label class="l">Kalite / kontrol</label><select class="f" name="quality">${Object.entries(QUAL).map(([k,[l]])=>`<option value="${k}">${l}</option>`).join("")}</select>
+    ${isAdmin()?`<label class="check"><input type="checkbox" name="mkExp" checked> Gider olarak kaydet (${money(inv.total)})</label>
+      <div class="row" style="gap:8px"><div class="grow"><select class="f mt" name="expStatus"><option value="bekliyor">Ödenecek</option><option value="odendi">Ödendi</option></select></div>
+      <div class="grow"><select class="f mt" name="expMethod"><option value="">Ödeme şekli</option>${opt(S.cfg.payOutMethods||[],"")}</select></div></div>`:""}`,
+  { submit:"Onayla ve stoka işle", onSubmit:async()=>{
+      const v=formVals(); let bad=false;
+      INV.rows.forEach(r=>{ const q=parseNum(r.stockQty); if(r.stockId&&(q==null||Number.isNaN(q)||q<0)) bad=true; r.q=Number.isNaN(q)?null:q; });
+      if(bad){ toast("Stoka işlenecek satırlarda geçerli miktar girin","err"); return false; }
+      const label=(v.supplier||"Tedarikçi")+(v.no?" · "+v.no:"");
+      for(const r of INV.rows){ // yeni stok kalemleri
+        if(r.stockId==="__new"){ const id=uid(); await setDoc("stock/"+id,{name:r.invName,cat:"",unit:r.unit||"",qty:0,min:null,note:"e-Faturadan eklendi",countedAt:null,countedBy:""});
+          S.stock.push({id,name:r.invName,qty:0,unit:r.unit}); r.stockId=id; } }
+      for(const r of INV.rows){ if(r.stockId&&r.how!=="aynı ad"){ const key=normTxt(r.invName); if(key) await setDoc("aliases/"+hashId(key),{key,stockId:r.stockId,name:r.invName}).catch(()=>{}); } }
+      const items=INV.rows.map(r=>{ const s=S.stock.find(x=>x.id===r.stockId); return {name:s?s.name:r.invName,invName:r.invName,qty:r.qty,unit:r.unit,price:r.price,stockId:r.stockId||null,stockQty:r.stockId?r.q:null}; });
+      const applied=await applyStock([],items,label);
+      const id=uid(), d=v.date||today(); let expenseId=null;
+      if(v.mkExp&&inv.total){ expenseId=uid(); const st=v.expStatus;
+        await setDoc("expenses/"+expenseId,{date:d,amount:inv.total,supplier:v.supplier,desc:inv.kind+(items.length?": "+items.map(i=>i.name).slice(0,4).join(", "):""),cat:"",status:st,method:v.expMethod,due:"",invoice:v.no,note:"",source:"teslimat",deliveryId:id,createdAt:nowISO(),createdBy:who(),...(st==="odendi"?{paidAt:nowISO(),paidBy:who()}:{})}); }
+      await setDoc("deliveries/"+id,{date:d,at:new Date(d+"T12:00").toISOString(),supplier:v.supplier,items,total:inv.total,quality:v.quality,note:"",invoiceNo:v.no,source:"efatura",stockApplied:applied,expenseId,by:who(),createdAt:nowISO()});
+      toast(applied.length+" kalem stoka işlendi","ok"); return true; } });
 }
 
 /* ================= GÖRÜNÜM: Kontrol ================= */
@@ -928,7 +1044,7 @@ function vStok(){
   ${!S.stock.length?`<div class="empty"><b>Henüz stok kalemi yok</b>Takip etmek istediğiniz balık, alkol, içecek ve sarf malzemelerini ekleyin; minimum seviye girerseniz kritik olanlar işaretlenir.</div>`
    :!list.length?`<div class="empty">Bu filtrede kalem yok.</div>`
    :[...g].map(([c,arr])=>`<div class="cat-h">${esc(c)}</div><div class="card" style="padding:2px 14px">${arr.map(row).join("")}</div>`).join("")}
-  ${S.stockLog.length?`<details class="card mt2"><summary style="font-weight:700;cursor:pointer">Sayım geçmişi</summary>${S.stockLog.slice(0,40).map(l=>`<div class="li"><div class="grow"><b>${esc(l.name)}</b><div class="sub">${rel(l.at)}${l.by?" · "+esc(l.by):""}</div></div><div class="num">${l.old!=null?NF.format(l.old):"—"} → <b>${NF.format(l.new)}</b></div></div>`).join("")}</details>`:""}
+  ${S.stockLog.length?`<details class="card mt2"><summary style="font-weight:700;cursor:pointer">Sayım geçmişi</summary>${S.stockLog.slice(0,40).map(l=>`<div class="li"><div class="grow"><b>${esc(l.name)}</b><div class="sub">${rel(l.at)}${l.by?" · "+esc(l.by):""}${l.note?" · "+esc(l.note):""}</div></div><div class="num">${l.old!=null?NF.format(l.old):"—"} → <b>${NF.format(l.new)}</b></div></div>`).join("")}</details>`:""}
   <div class="savebar hidden" id="sbar"><span class="grow" id="sbarTxt"></span><button class="btn sm" data-act="st-cancel">Vazgeç</button><button class="btn sm pri" data-act="st-saveall">Kaydet</button></div>`;
 }
 
@@ -1135,7 +1251,7 @@ const ACT={
   "exp-filter":t=>{ UI.expF=t.dataset.f; schedule(); },
   "del-new":()=>delForm(null),
   "del-edit":t=>{ const x=S.deliveries.find(y=>y.id===t.dataset.id); if(x) delForm(x); },
-  "del-del":t=>confirmBox("Bu teslimat kaydı silinsin mi? Bağlı gider kaydı silinmez.",async()=>{ await delDoc("deliveries/"+t.dataset.id); }),
+  "del-del":t=>confirmBox("Bu teslimat kaydı silinsin mi? Stoka eklenen miktarlar geri alınır; bağlı gider kaydı silinmez.",async()=>{ const x=S.deliveries.find(y=>y.id===t.dataset.id); if(x&&x.stockApplied) await applyStock(x.stockApplied,[],(x.supplier||"Teslimat")+" (silindi)"); await delDoc("deliveries/"+t.dataset.id); }),
   "di-add":()=>{ DEL.items.push({name:"",qty:null,unit:"kg",price:null}); DELdraw(); const ins=$("#delItems").querySelectorAll("[data-k=name]"); ins[ins.length-1].focus(); },
   "di-del":t=>{ DEL.items.splice(+t.dataset.i,1); DELdraw(); },
   "p-add":()=>fishForm(null),
@@ -1225,6 +1341,7 @@ document.addEventListener("input",e=>{
   else if(t.dataset.te!=null && TE){ TE.items[+t.dataset.te].text=t.value; }
   else if(t.dataset.bind==="eq"){ UI.eq=t.value; schedule(); }
   else if(t.dataset.di!=null && DEL){ DEL.items[+t.dataset.di][t.dataset.k]=t.value; syncDelTotal(); }
+  else if(t.dataset.inv!=null && INV && t.tagName==="INPUT"){ INV.rows[+t.dataset.inv][t.dataset.k]=t.value; }
 });
 document.addEventListener("change",async e=>{
   const t=e.target;
@@ -1235,6 +1352,8 @@ document.addEventListener("change",async e=>{
   if(t.dataset.save==="ck-val"){ const k=t.dataset.draft, v=t.value.trim(); delete UI.drafts[k]; saveRun(t.dataset.tpl,r=>{ r.values[t.dataset.item]=v; if(v&&!r.done[t.dataset.item]) r.done[t.dataset.item]={by:who(),at:nowISO()}; }); return; }
   if(t.dataset.save==="ck-note"){ const k=t.dataset.draft, v=t.value; delete UI.drafts[k]; saveRun(t.dataset.tpl,r=>{ r.note=v; }); return; }
   if(t.dataset.bind==="delSup"){ UI.delSup=t.value; schedule(); return; }
+  if(t.id==="invFile"&&t.files&&t.files[0]){ const f=t.files[0]; t.value=""; invoiceUpload(f); return; }
+  if(t.dataset.inv!=null&&INV){ INV.rows[+t.dataset.inv][t.dataset.k]=t.value; if(t.dataset.k==="stockId") INV.rows[+t.dataset.inv].how=t.value?"seçildi":""; return; }
   if(t.dataset.di!=null && DEL && t.tagName==="SELECT"){ DEL.items[+t.dataset.di][t.dataset.k]=t.value; return; }
 });
 document.addEventListener("keydown",e=>{
