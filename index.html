@@ -861,6 +861,39 @@ function syncDelTotal(){
   el.value=any?String(Math.round(s*100)/100).replace(".",","):"";
 }
 
+/* ================= Ürün türü (otomatik) ================= */
+// Sıra önemli: önce daha özel kurallar. Her kural: [tür, düzenli ifade]
+const TUR_RULES=[
+  ["Rakı",/(?:^|[^a-zçğıöşü])rak[ıi](?:$|[^a-zçğıöşü])|sar[ıi]zeybek|tekirda[ğg]|beylerbeyi|alt[ıi]nba[şs]|\befe\b|kul[üu]p rak/],
+  ["Köpüklü şarap",/prosecco|[şs]ampanya|champagne|\bcava\b|k[öo]p[üu]kl[üu]|cinzano/],
+  ["Roze şarap",/k[ıi]z[ıi]l alan|blush|\broze\b|ros[ée]\b/],
+  ["Kırmızı şarap",/cabernet|merlot|syrah|shiraz|[öo]k[üu]zg[öo]z[üu]|bo[ğg]azkere|kalecik|pinot noir|malbec|k[ıi]rm[ıi]z[ıi] [şs]arap/],
+  ["Beyaz şarap",/sauvignon|chardonnay|narince|\bemir\b|sultaniye|anaxagoras|yedi bilgeler|kayra allure|muscat|beyaz [şs]arap/],
+  ["Şarap",/[şs]arap|\bwine\b|umurbey|selendi|kayra|doluca|kavakl[ıi]dere|cielo/],
+  ["Viski",/viski|whisk|chivas|black label|red label|johnnie|jack daniel|talisker|lagavulin|aberlour|hibiki|glen|jameson|macallan|ballantine|\bj ?& ?b\b|bushmills|monkey shoulder/],
+  ["Konyak",/konyak|cognac|hennessy|martell|remy martin|courvoisier/],
+  ["Tekila",/tekila|tequila|patr[oó]n|jose cuervo|olmeca|don julio/],
+  ["Cin",/(?:^|[^a-zçğıöşü])g[ıi]n(?:$|[^a-zçğıöşü])|\bcin\b|gordon|bombay|tanqueray|hendrick|beefeater/],
+  ["Votka",/votka|vodka|absolut|smirnoff|grey goose|istanblue|russian standard/],
+  ["Rom",/\brom\b|\brum\b|bacardi|havana club|captain morgan/],
+  ["Likör",/lik[öo]r|liqueur|\bhare\b|baileys|kahlua|j[äa]ger|amaretto|sambuca|limoncello/],
+  ["Bira",/\bbira\b|\bbeer\b|\befes\b|miller|heineken|corona|bitburger|tuborg|carlsberg|bomonti|guinness|beck'?s/],
+  ["Şalgam",/[şs]algam/],
+  ["Soğuk çay",/fuse ?tea|ice ?tea|lipton ice|so[ğg]uk [çc]ay/],
+  ["Meyve suyu",/cappy|meyve suyu|dimes|\bjuice\b|nektar/],
+  ["Soda",/\bsoda\b|maden suyu|k[ıi]z[ıi]lay|beypazar[ıi]/],
+  ["Gazlı içecek",/coca ?cola|\bcola\b|\bkola\b|sprite|fanta|pepsi|7 ?up|schweppes|gazoz/],
+  ["Su",/^su\b|\bsu \(|\bsu$|\bwater\b|pet su|damacana/]
+];
+const TUR_ARAMA={"Rakı":"raki","Viski":"whisky whiskey scotch","Kırmızı şarap":"şarap wine","Beyaz şarap":"şarap wine","Roze şarap":"şarap wine rose blush","Köpüklü şarap":"şarap şampanya prosecco","Şarap":"wine","Bira":"beer","Cin":"gin","Tekila":"tequila","Konyak":"cognac","Votka":"vodka","Likör":"liqueur","Gazlı içecek":"kola cola","Meyve suyu":"juice","Soğuk çay":"ice tea"};
+const ALKOL_TUR=["Rakı","Kırmızı şarap","Beyaz şarap","Roze şarap","Köpüklü şarap","Şarap","Viski","Konyak","Tekila","Cin","Votka","Rom","Likör","Bira"];
+const TUR_LIST=[...ALKOL_TUR,...TUR_RULES.map(r=>r[0]).filter(t=>!ALKOL_TUR.includes(t))];   // gösterim sırası
+function autoTur(name){ const n=String(name||"").toLocaleLowerCase("tr"); const r=TUR_RULES.find(([,re])=>re.test(n)); return r?r[0]:""; }
+const turOf=s=>(s&&s.tur)||autoTur(s&&s.name);
+function autoCat(name){ const t=autoTur(name), cats=S.cfg.stockCats||[]; if(!t) return "";
+  const want=ALKOL_TUR.includes(t)?"Alkol":"İçecek"; return cats.includes(want)?want:""; }
+const stockHay=s=>{ const t=turOf(s); return normTxt(s.name+" "+(s.cat||"")+" "+(s.note||"")+" "+t+" "+(TUR_ARAMA[t]||"")); };
+
 /* ================= Teslimat → stok ve e-Fatura ================= */
 const normTxt=s=>String(s||"").toLocaleLowerCase("tr").replace(/[^a-z0-9çğıöşüâî]+/g," ").replace(/(\d+)\s*[,.]\s*(\d+)/g,"$1.$2").replace(/(\d+(?:\.\d+)?)\s+(cl|ml|lt|l|kg|gr|g|cc)\b/g,"$1$2").replace(/\s+/g," ").trim();
 const hashId=s=>{ let h1=0x811c9dc5,h2=5381; for(const ch of String(s)){ const c=ch.codePointAt(0); h1=Math.imul(h1^c,16777619)>>>0; h2=(Math.imul(h2,33)+c)>>>0; } return "a"+h1.toString(36)+h2.toString(36); };
@@ -960,7 +993,7 @@ async function invoiceUpload(file){
       if(bad){ toast("Stoka işlenecek satırlarda geçerli miktar girin","err"); return false; }
       const label=(v.supplier||"Tedarikçi")+(v.no?" · "+v.no:"");
       for(const r of INV.rows){ // yeni stok kalemleri
-        if(r.stockId==="__new"){ const id=uid(); await setDoc("stock/"+id,{name:r.invName,cat:"",unit:r.unit||"",qty:0,min:null,note:"e-Faturadan eklendi",countedAt:null,countedBy:""});
+        if(r.stockId==="__new"){ const id=uid(); await setDoc("stock/"+id,{name:r.invName,cat:autoCat(r.invName),unit:r.unit||"",qty:0,min:null,note:"e-Faturadan eklendi",countedAt:null,countedBy:""});
           S.stock.push({id,name:r.invName,qty:0,unit:r.unit}); r.stockId=id; } }
       for(const r of INV.rows){ if(r.stockId&&r.how!=="aynı ad"){ const key=normTxt(r.invName); if(key) await setDoc("aliases/"+hashId(key),{key,stockId:r.stockId,name:r.invName}).catch(()=>{}); } }
       const items=INV.rows.map(r=>{ const s=S.stock.find(x=>x.id===r.stockId); return {name:s?s.name:r.invName,invName:r.invName,qty:r.qty,unit:r.unit,price:r.price,stockId:r.stockId||null,stockQty:r.stockId?r.q:null}; });
@@ -1031,12 +1064,14 @@ function vStok(){
   let list=S.stock.slice().sort((a,b)=>trSort(a.cat||"",b.cat||"")||trSort(a.name||"",b.name||""));
   const sq=normTxt(UI.sq);
   if(sq){ const words=sq.split(" ").filter(Boolean);   // arama tüm kategorilerde; her kelime adda/kategoride/notta geçmeli
-    list=list.filter(s=>{ const h=normTxt(s.name+" "+(s.cat||"")+" "+(s.note||"")); return words.every(w=>h.includes(w)); }); }
+    list=list.filter(s=>{ const h=stockHay(s); return words.every(w=>h.includes(w)); }); }
   else if(UI.stCat==="Kritik") list=list.filter(isLow); else if(UI.stCat!=="Tümü") list=list.filter(s=>s.cat===UI.stCat);
   const t=today(), low=S.stock.filter(isLow).length, counted=S.stock.filter(s=>dayOf(s.countedAt)===t).length;
-  const g=groupBy(list,s=>s.cat||"Kategorisiz");
+  const byTur=!sq&&(UI.stCat==="Alkol"||UI.stCat==="İçecek");
+  if(byTur){ const ord=t=>{ const i=TUR_LIST.indexOf(t); return i<0?99:i; }; list.sort((a,b)=>ord(turOf(a))-ord(turOf(b))||trSort(a.name,b.name)); }
+  const g=groupBy(list,s=>byTur?(turOf(s)||"Diğer"):(s.cat||"Kategorisiz"));
   const row=s=>{ const lw=isLow(s), dr=UI.stDrafts[s.id];
-    return `<div class="li"><div class="grow"><div class="row wrapf" style="gap:6px"><b>${esc(s.name)}</b>${lw?`<span class="badge r">Kritik</span>`:""}${dayOf(s.countedAt)===t?`<span class="badge g">Bugün sayıldı</span>`:""}</div>
+    return `<div class="li"><div class="grow"><div class="row wrapf" style="gap:6px"><b>${esc(s.name)}</b>${!byTur&&turOf(s)?`<span class="badge b">${esc(turOf(s))}</span>`:""}${lw?`<span class="badge r">Kritik</span>`:""}${dayOf(s.countedAt)===t?`<span class="badge g">Bugün sayıldı</span>`:""}</div>
       <div class="sub">Mevcut: <b style="color:var(--ink)">${s.qty!=null&&s.qty!==""?NF.format(s.qty):"—"}</b> ${esc(s.unit||"")}${s.min!=null&&s.min!==""?` · Min: ${NF.format(s.min)}`:""} · Son sayım: ${rel(s.countedAt)}${s.countedBy?" · "+esc(s.countedBy):""}</div>${s.note?`<div class="sub">${esc(s.note)}</div>`:""}</div>
       ${UI.countMode?`<input class="pin" style="width:86px" id="sc-${s.id}" inputmode="decimal" placeholder="Sayım" value="${esc(dr??"")}" data-stdraft="${s.id}" aria-label="${esc(s.name)} sayım">`:`<button class="btn sm ghost" data-act="st-edit" data-id="${s.id}">Düzenle</button>`}</div>`; };
   return `${stokSeg("stok")}<div class="row between wrapf mb"><h1 style="margin:0">Stok ve alkol kontrolü</h1><div class="row"><button class="btn ${UI.countMode?"navy":""}" data-act="st-count">${UI.countMode?"Sayımı kapat":"Sayım yap"}</button><button class="btn pri" data-act="st-new">+ Kalem</button></div></div>
@@ -1197,11 +1232,12 @@ function stockForm(s){
     <div class="grow"><label class="l">Birim</label><input class="f" name="unit" value="${esc(s.unit||"")}" placeholder="şişe, kg, kasa…"></div></div>
     <div class="row" style="gap:8px"><div class="grow"><label class="l">Mevcut miktar</label><input class="f" name="qty" inputmode="decimal" value="${s.qty!=null?esc(String(s.qty).replace(".",",")):""}" placeholder="Boş bırakılabilir"></div>
     <div class="grow"><label class="l">Minimum seviye</label><input class="f" name="min" inputmode="decimal" value="${s.min!=null?esc(String(s.min).replace(".",",")):""}" placeholder="Boş bırakılabilir"></div></div>
+    <label class="l">Tür</label><input class="f" name="tur" list="turList" value="${esc(s.tur||"")}" placeholder="${esc(autoTur(s.name)?"Otomatik: "+autoTur(s.name):"ör. Viski, Rakı, Gazlı içecek")}"><datalist id="turList">${TUR_LIST.map(t=>`<option value="${esc(t)}">`).join("")}</datalist><div class="sub" style="margin-top:3px">Boş bırakırsanız addan otomatik bulunur; aramada kullanılır.</div>
     <label class="l">Not</label><input class="f" name="note" value="${esc(s.note||"")}" placeholder="ör. Tedarikçi, raf yeri">`,
   { extra:isNew?"":`<button type="button" class="btn danger" data-act="st-del" data-id="${s.id}">Sil</button>`,
     onSubmit:async()=>{ const v=formVals(); if(!v.name){ toast("Kalem adı gerekli","err"); return false; }
       const qty=parseNum(v.qty), min=parseNum(v.min); if(Number.isNaN(qty)||Number.isNaN(min)){ toast("Miktar geçerli değil","err"); return false; }
-      const data={name:v.name,cat:v.cat,unit:v.unit,qty,min,note:v.note}; const at=nowISO();
+      const data={name:v.name,cat:v.cat||(isNew?autoCat(v.name):""),unit:v.unit,qty,min,note:v.note,tur:v.tur||""}; const at=nowISO();
       if(isNew){ const id=uid(); await setDoc("stock/"+id,{...data,countedAt:qty!=null?at:null,countedBy:qty!=null?who():""}); }
       else { const ch=qty!==(s.qty??null); await updDoc("stock/"+s.id,ch?{...data,countedAt:at,countedBy:who()}:data);
         if(ch&&qty!=null) await setDoc("stockLog/"+uid(),{itemId:s.id,name:v.name,old:s.qty??null,new:qty,at,by:who()}); }
