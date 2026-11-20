@@ -40,7 +40,7 @@ a{color:var(--sea)}
 .iconbtn{background:var(--soft);border:0;color:var(--navy);border-radius:10px;width:36px;height:36px;display:grid;place-items:center;text-decoration:none;flex:none}
 .iconbtn.on{background:var(--navy);color:#fff}
 .sync{width:8px;height:8px;border-radius:50%;background:#9aa;flex:none}
-.sync.ok{background:#4ade80}.sync.local{background:#fbbf24}.sync.err{background:#f87171}
+.sync.ok{background:#4ade80}.sync.busy{background:#fbbf24;animation:pls 1s infinite}@keyframes pls{50%{opacity:.35}}.sync.local{background:#fbbf24}.sync.err{background:#f87171}
 
 nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:20;background:#fff;border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom)}
 nav.tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px 8px;text-decoration:none;color:var(--muted);font-size:10.5px;font-weight:600}
@@ -349,7 +349,7 @@ function subscribeAll(){
   subCol("expenses", DB.collection("expenses").orderBy("date","desc").limit(3000));
   subCol("deliveries", DB.collection("deliveries").orderBy("at","desc").limit(1500));
 }
-function setSync(k){ const el=$("#sync"); el.className="sync "+k; el.title={ok:"Bulutta kayıtlı, canlı senkron",local:"Yerel mod: veriler yalnızca bu tarayıcıda",err:"Bağlantı sorunu"}[k]||""; }
+function setSync(k){ const el=$("#sync"); el.className="sync "+k; el.title={ok:"Tüm değişiklikler kaydedildi",busy:"Kaydediliyor…",local:"Yerel mod: veriler yalnızca bu tarayıcıda",err:"Bağlantı sorunu"}[k]||""; }
 
 /* ================= render altyapısı ================= */
 let rq=0;
@@ -1250,7 +1250,7 @@ document.addEventListener("submit",async e=>{
 });
 $("#modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal(); });
 $("#whoSel").addEventListener("change",e=>{ UI.who=e.target.value; lsSet("paraketa_who",UI.who); });
-window.addEventListener("beforeunload",e=>{ if(priceDrafts().length||stockDrafts().length){ e.preventDefault(); e.returnValue=""; } });
+window.addEventListener("beforeunload",e=>{ if(priceDrafts().length||stockDrafts().length||window.__gasBusy){ e.preventDefault(); e.returnValue=""; } });
 
 const ROUTES=["ozet","kasa","gider","fiyat","gecmis","kontrol","odeme","stok","teslimat","gorev","ayarlar"];
 function route(){ let h=location.hash.replace("#",""); if(!isAdmin()&&(h==="kasa"||h==="gider")) h="ozet"; const prev=UI.view; UI.view=ROUTES.includes(h)?h:"ozet"; if(prev!==UI.view){ closeModal(); window.scrollTo(0,0); } render(); }
@@ -1276,7 +1276,11 @@ const isAdmin=()=>!IS_GAS||(UI.me&&(UI.me.rol==="yonetici"||UI.me.rol==="mudur")
 const isOwner=()=>!IS_GAS||(UI.me&&UI.me.rol==="yonetici");                           // kullanıcı yönetimi
 const ROL_AD={yonetici:"Yönetici",mudur:"Müdür",personel:"Personel"};
 function makeGasDB(token){
-  const store={}, subs=new Set(); let since=0, q=[], qt=null, pulling=null;
+  const store={}, subs=new Set(); let since=0, q=[], qt=null, pulling=null, inflight=null;
+  const pend={};  // yolu sunucuya henüz yazılmamış kayıtlar: gelen eski veri bunların üstüne yazılmasın
+  const pendAdd=p=>{ pend[p]=(pend[p]||0)+1; }, pendDone=p=>{ if(!--pend[p]) delete pend[p]; };
+  const busy=()=>!!(q.length||inflight);
+  const showBusy=()=>{ window.__gasBusy=busy(); setSync(busy()?"busy":"ok"); };
   const clone=o=>JSON.parse(JSON.stringify(o));
   const meta={fromCache:false,hasPendingWrites:false};
   const notify=()=>setTimeout(()=>subs.forEach(f=>f()),0);
@@ -1286,20 +1290,28 @@ function makeGasDB(token){
     if(pulling&&!full) return pulling;
     pulling=gs("oku",token,full?0:since).then(r=>{
       if(full) Object.keys(store).forEach(k=>delete store[k]);
-      r.d.forEach(([p,j])=>{ if(j) { try{ store[p]=JSON.parse(j); }catch(e){} } else delete store[p]; });
-      since=r.simdi-5000; if(r.ben) UI.me=r.ben; setSync("ok");
+      r.d.forEach(([p,j])=>{ if(!full&&pend[p]) return; if(j) { try{ store[p]=JSON.parse(j); }catch(e){} } else delete store[p]; });
+      since=r.simdi-5000; if(r.ben) UI.me=r.ben; showBusy();
       if(full||r.d.length) notify(); pulling=null; return r;
     },e=>{ pulling=null; const m=gsMsg(e); if(/OTURUM/.test(m)) sessionEnded(); else setSync("err"); throw e; });
     return pulling;
   }
   function flush(){
-    qt=null; const batch=q; q=[]; if(!batch.length) return;
-    gs("yaz",token,batch.map(b=>b.op)).then(()=>{ batch.forEach(b=>b.res()); pull(false).catch(()=>{}); },
-      e=>{ const m=gsMsg(e); const code=/YETKI|YOK|GECERSIZ|çok/i.test(m)?"invalid_argument":/OTURUM/.test(m)?"revoked":"unavailable";
-        if(code==="revoked") sessionEnded();
-        batch.forEach(b=>b.rej({code,message:m})); pull(true).catch(()=>{}); });
+    qt=null; if(inflight||!q.length){ showBusy(); return; }
+    const batch=q; q=[]; inflight=batch; showBusy();
+    gs("yaz",token,batch.map(b=>b.op)).then(()=>{
+      inflight=null; batch.forEach(b=>pendDone(b.op.yol)); showBusy();
+      if(q.length) flush(); else pull(false).catch(()=>{});
+    },e=>{
+      inflight=null; batch.forEach(b=>pendDone(b.op.yol));
+      const m=gsMsg(e);
+      if(/OTURUM/.test(m)){ sessionEnded(); return; }
+      toast(/YETKI/.test(m)?"Bu işlem için yetkiniz yok; değişiklik geri alındı.":"Kaydedilemedi ("+m+"). Değişiklik geri alındı, tekrar deneyin.","err");
+      pull(true).catch(()=>{}); if(q.length) flush(); showBusy();
+    });
   }
-  const enqueue=op=>new Promise((res,rej)=>{ q.push({op,res,rej}); if(!qt) qt=setTimeout(flush,150); });
+  // Ekran hemen güncellenir; kayıt arka planda sırayla sunucuya gider.
+  const enqueue=op=>{ q.push({op}); pendAdd(op.yol); if(!qt) qt=setTimeout(flush,120); showBusy(); return Promise.resolve(); };
   function docRef(p){ return { id:p.split("/").pop(), path:p,
     get:async()=>snapDoc(p),
     set:d=>{ store[p]=clone(d); notify(); return enqueue({op:"set",yol:p,veri:clone(d)}); },
