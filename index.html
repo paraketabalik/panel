@@ -270,7 +270,7 @@ const SUGGESTED_TEMPLATES = [
 const S = { fish:[], log:[], cfg:{...DEFAULT_CFG}, cash:[], expenses:[], deliveries:[], aliases:[],
   templates:[], runs:[], payments:[], stock:[], stockLog:[], staff:[], tasks:[] };
 const UI = { view:"ozet", date:today(), q:"", drafts:{}, stDrafts:{}, histFish:"", histDays:30, taskF:"acik", taskStaff:"",
-  stCat:"Tümü", countMode:false, ozPer:"gun", ozRef:today(), per:"ay", expF:"bekleyen", eq:"", delSup:"", who: lsGet("paraketa_who","") };
+  stCat:"Tümü", sq:"", countMode:false, ozPer:"gun", ozRef:today(), per:"ay", expF:"bekleyen", eq:"", delSup:"", who: lsGet("paraketa_who","") };
 let DB=null, MODE="wait", loadedOnce=false;
 
 /* ================= yerel yedek veritabanı (db yoksa) ================= */
@@ -1029,7 +1029,10 @@ function stockDrafts(){ return Object.keys(UI.stDrafts).filter(id=>{ const s=S.s
 function vStok(){
   const cats=["Tümü","Kritik",...(S.cfg.stockCats||[])];
   let list=S.stock.slice().sort((a,b)=>trSort(a.cat||"",b.cat||"")||trSort(a.name||"",b.name||""));
-  if(UI.stCat==="Kritik") list=list.filter(isLow); else if(UI.stCat!=="Tümü") list=list.filter(s=>s.cat===UI.stCat);
+  const sq=normTxt(UI.sq);
+  if(sq){ const words=sq.split(" ").filter(Boolean);   // arama tüm kategorilerde; her kelime adda/kategoride/notta geçmeli
+    list=list.filter(s=>{ const h=normTxt(s.name+" "+(s.cat||"")+" "+(s.note||"")); return words.every(w=>h.includes(w)); }); }
+  else if(UI.stCat==="Kritik") list=list.filter(isLow); else if(UI.stCat!=="Tümü") list=list.filter(s=>s.cat===UI.stCat);
   const t=today(), low=S.stock.filter(isLow).length, counted=S.stock.filter(s=>dayOf(s.countedAt)===t).length;
   const g=groupBy(list,s=>s.cat||"Kategorisiz");
   const row=s=>{ const lw=isLow(s), dr=UI.stDrafts[s.id];
@@ -1039,10 +1042,11 @@ function vStok(){
   return `${stokSeg("stok")}<div class="row between wrapf mb"><h1 style="margin:0">Stok ve alkol kontrolü</h1><div class="row"><button class="btn ${UI.countMode?"navy":""}" data-act="st-count">${UI.countMode?"Sayımı kapat":"Sayım yap"}</button><button class="btn pri" data-act="st-new">+ Kalem</button></div></div>
   <div class="grid g3 mb tiles"><div class="card tile"><div class="k">Kritik</div><div class="v">${low}</div></div><div class="card tile"><div class="k">Bugün sayılan</div><div class="v">${counted}<small> / ${S.stock.length}</small></div></div>
     <div class="card tile"><div class="k">Alkol</div><div class="v">${S.stock.filter(s=>s.cat==="Alkol"&&dayOf(s.countedAt)===t).length}<small> / ${S.stock.filter(s=>s.cat==="Alkol").length} sayıldı</small></div></div></div>
-  <div class="chips">${cats.map(c=>`<button class="chip ${UI.stCat===c?"on":""}" data-act="st-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+  <div class="row mb" style="gap:6px"><input class="f grow" id="sq" type="search" placeholder="Stokta ara… (ör. limon, rakı)" value="${esc(UI.sq)}" data-bind="sq" autocomplete="off" aria-label="Stokta ara">${UI.sq?`<button class="btn sm" data-act="sq-clear">Temizle</button>`:""}</div>
+  ${UI.sq?"":`<div class="chips">${cats.map(c=>`<button class="chip ${UI.stCat===c?"on":""}" data-act="st-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}
   ${UI.countMode?`<div class="banner" style="background:var(--sea-soft);border-color:#b9e0e3;color:var(--navy)">Sayım modu: her kalem için saydığınız miktarı girin, sonra alttaki “Kaydet”e basın. Boş bırakılanlar değişmez.</div>`:""}
   ${!S.stock.length?`<div class="empty"><b>Henüz stok kalemi yok</b>Takip etmek istediğiniz balık, alkol, içecek ve sarf malzemelerini ekleyin; minimum seviye girerseniz kritik olanlar işaretlenir.</div>`
-   :!list.length?`<div class="empty">Bu filtrede kalem yok.</div>`
+   :!list.length?`<div class="empty">${UI.sq?`“${esc(UI.sq)}” stokta bulunamadı.`:"Bu filtrede kalem yok."}</div>`
    :[...g].map(([c,arr])=>`<div class="cat-h">${esc(c)}</div><div class="card" style="padding:2px 14px">${arr.map(row).join("")}</div>`).join("")}
   ${S.stockLog.length?`<details class="card mt2"><summary style="font-weight:700;cursor:pointer">Sayım geçmişi</summary>${S.stockLog.slice(0,40).map(l=>`<div class="li"><div class="grow"><b>${esc(l.name)}</b><div class="sub">${rel(l.at)}${l.by?" · "+esc(l.by):""}${l.note?" · "+esc(l.note):""}</div></div><div class="num">${l.old!=null?NF.format(l.old):"—"} → <b>${NF.format(l.new)}</b></div></div>`).join("")}</details>`:""}
   <div class="savebar hidden" id="sbar"><span class="grow" id="sbarTxt"></span><button class="btn sm" data-act="st-cancel">Vazgeç</button><button class="btn sm pri" data-act="st-saveall">Kaydet</button></div>`;
@@ -1282,6 +1286,7 @@ const ACT={
   "st-new":()=>stockForm(null),
   "st-edit":t=>{ const s=S.stock.find(x=>x.id===t.dataset.id); if(s) stockForm(s); },
   "st-del":t=>{ const s=S.stock.find(x=>x.id===t.dataset.id); if(!s) return; confirmBox(`“${s.name}” silinsin mi?`,async()=>{ await delDoc("stock/"+s.id); }); },
+  "sq-clear":()=>{ UI.sq=""; schedule(); setTimeout(()=>{ const e=$("#sq"); if(e) e.focus(); },30); },
   "st-cat":t=>{ UI.stCat=t.dataset.cat; schedule(); },
   "st-count":()=>{ UI.countMode=!UI.countMode; if(!UI.countMode) UI.stDrafts={}; schedule(); },
   "st-cancel":()=>{ UI.stDrafts={}; schedule(); },
@@ -1340,6 +1345,7 @@ document.addEventListener("input",e=>{
   else if(t.dataset.bind==="q"){ UI.q=t.value; schedule(); }
   else if(t.dataset.te!=null && TE){ TE.items[+t.dataset.te].text=t.value; }
   else if(t.dataset.bind==="eq"){ UI.eq=t.value; schedule(); }
+  else if(t.dataset.bind==="sq"){ UI.sq=t.value; schedule(); }
   else if(t.dataset.di!=null && DEL){ DEL.items[+t.dataset.di][t.dataset.k]=t.value; syncDelTotal(); }
   else if(t.dataset.inv!=null && INV && t.tagName==="INPUT"){ INV.rows[+t.dataset.inv][t.dataset.k]=t.value; }
 });
